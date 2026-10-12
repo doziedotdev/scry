@@ -1,0 +1,4 @@
+{"type": "session", "version": 3, "id": "child-scout", "cwd": "/work/synthetic", "timestamp": "2026-09-01T10:01:00Z"}
+{"type": "session_init", "agent": "scout", "task": "Inspect sample\nReturn facts.", "modelRole": "smol", "readOnly": true, "resolvedModel": "synthetic/fast"}
+{"type": "message", "id": "cu", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "user", "content": "Delegated instruction", "timestamp": "2026-09-01T10:01:00Z", "attribution": "parent"}}
+{"type": "message", "id": "ca", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "assistant", "content": "Inspection complete.", "timestamp": "2026-09-01T10:01:00Z"}}

@@ -1,0 +1,11 @@
+{"type": "title", "v": 1, "title": "Synthetic OMP tree", "source": "auto"}
+{"type": "session", "version": 3, "id": "fixture001", "cwd": "/work/synthetic", "timestamp": "2026-09-01T10:00:00Z"}
+{"type": "model_change", "model": "synthetic/model"}
+{"type": "message", "id": "u1", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "Inspect the sample."}], "timestamp": "2026-09-01T10:01:00Z"}}
+{"type": "message", "id": "a1", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "I will inspect two sources."}, {"type": "text", "text": "Starting now."}, {"type": "toolCall", "id": "spawn1", "name": "task", "arguments": {"tasks": [{"name": "Scout", "agent": "scout", "task": "Inspect sample\nReturn facts."}]}, "intent": "Delegating inspection"}, {"type": "toolCall", "id": "read1", "name": "read", "arguments": {"path": "missing.txt"}, "intent": "Reading missing sample"}], "timestamp": "2026-09-01T10:01:00Z"}}
+{"type": "message", "id": "t1", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "toolResult", "content": [{"type": "text", "text": "File not found"}], "timestamp": "2026-09-01T10:01:00Z", "toolCallId": "read1", "toolName": "read", "isError": true}}
+{"type": "message", "id": "t2", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "toolResult", "content": [{"type": "text", "text": "Scout completed"}], "timestamp": "2026-09-01T10:01:00Z", "toolCallId": "spawn1", "toolName": "task", "isError": false}}
+{"type": "message", "id": "s1", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "user", "content": "Injected notification", "timestamp": "2026-09-01T10:01:00Z", "synthetic": true, "attribution": "agent"}}
+{"type": "compaction", "id": "c1", "timestamp": "2026-09-01T10:02:00Z", "summary": "Sample inspection summarized."}
+{"type": "message", "id": "s2", "timestamp": "2026-09-01T10:01:00Z", "message": {"role": "user", "content": "Agent follow-up", "timestamp": "2026-09-01T10:01:00Z", "attribution": {"agent": "Scout"}}}
+{"type": "custom", "data": "skip me"}

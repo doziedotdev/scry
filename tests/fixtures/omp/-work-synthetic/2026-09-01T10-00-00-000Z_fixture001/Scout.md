@@ -1,0 +1,1 @@
+Synthetic inspection output.

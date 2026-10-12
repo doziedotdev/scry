@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scry"
+version = "2.0.0"
+description = "One lens over every past and present agent session on a machine, addressed by ref"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Dozie Chukwuemeka" }]
+keywords = ["transcripts", "agents", "claude-code", "cursor", "hermes", "search", "sqlite", "fts5"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/doziedotdev/scry"
+
+[project.scripts]
+scry = "scry.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["scry*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
