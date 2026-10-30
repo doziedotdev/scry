@@ -43,6 +43,8 @@ class Config:
     cursor_state_db: Path = field(default_factory=Path)
     omp_sessions_dir: Path = field(default_factory=Path)
     hermes_dir: Path = field(default_factory=Path)
+    agy_brain_dir: Path = field(default_factory=Path)
+    agy_summaries_db: Path = field(default_factory=Path)
 
     def searched_by_default(self, name: str) -> bool:
         if name in self.exclude_stores:
@@ -50,7 +52,7 @@ class Config:
         return self.default_stores is None or name in self.default_stores
 
 
-_TRANSCRIPT_DIRS = (".claude/projects", ".omp/agent/sessions", ".cursor/projects", ".hermes/state.db")
+_TRANSCRIPT_DIRS = (".claude/projects", ".omp/agent/sessions", ".cursor/projects", ".hermes/state.db", ".gemini/antigravity/brain")
 
 
 def resolve_home() -> Path:
@@ -121,6 +123,8 @@ def load_config(config_path: Path | None = None, home: Path | None = None) -> Co
         cursor_state_db=home / ".config" / "Cursor" / "User" / "globalStorage" / "state.vscdb",
         omp_sessions_dir=home / ".omp" / "agent" / "sessions",
         hermes_dir=home / ".hermes",
+        agy_brain_dir=home / ".gemini" / "antigravity" / "brain",
+        agy_summaries_db=home / ".gemini" / "antigravity" / "conversation_summaries.db",
     )
 
 

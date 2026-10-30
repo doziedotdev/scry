@@ -172,6 +172,7 @@ def test_skill_of_call_across_harnesses():
     assert skill_of_call("Skill", json.dumps({"command": "/pdf"})) == ("pdf", "invoked")
     assert skill_of_call("skill_view", json.dumps({"name": "writing-plans"})) == ("writing-plans", "read")
     assert skill_of_call("read_file", json.dumps({"path": "/h/.hermes/skills/ops/runbook/SKILL.md", "limit": 50})) == ("runbook", "read")
+    assert skill_of_call("read_file", json.dumps({"Path": r"C:\Users\me\.gemini\antigravity\builtin\skills\antigravity_guide\SKILL.md"})) == ("antigravity_guide", "read")
     assert skill_of_call("Read", json.dumps({"file_path": "/repo/.claude/skills/tidy/SKILL.md"})) == ("tidy", "read")
     assert skill_of_call("read", json.dumps({"path": "skill://scry:10-20"})) == ("scry", "read")
     assert skill_of_call("read", json.dumps({"path": "/repo/docs/SKILL.md.bak"})) is None

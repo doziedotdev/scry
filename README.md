@@ -1,6 +1,6 @@
 # scry
 
-One lens over every past and present agent session on a machine: Claude Code, Cursor, Oh My Pi (OMP) and Hermes today, any harness with an adapter tomorrow. Stdlib-only Python 3.11+, one SQLite index, no network, no telemetry.
+One lens over every past and present agent session on a machine: Claude Code, Cursor, Oh My Pi (OMP), Hermes and Google Antigravity (`agy`) today, any harness with an adapter tomorrow. Stdlib-only Python 3.11+, one SQLite index, no network, no telemetry.
 
 The tool exists so that an agent (any model, any harness, in a subagent, in a parallel session, or years later) can answer "did we work on X, where, what was asked, how did it end, what did that subagent do" without pasting transcripts into its context. It does that with three ideas:
 
@@ -48,7 +48,7 @@ Options: `--store omp,hermes.work` (default: every store not excluded in config)
 
 Search: all words must appear in one turn. If nothing matches, the tool retries for all words within one session, then any word, and the header names the tier it used. Quoted phrases, `-word` exclusion and `word*` prefixes work. `find` searches user, assistant, summary and mail text by default; `--speaker tool` searches tool output and tool-call arguments (file paths, commands, function names), `--speaker thinking` searches reasoning.
 
-Skills: `uses` = `invoked` + `read`. An invocation is an OMP skill sub-turn (`[skill <name>]`) or a Claude Code `Skill` call. A read is a file read of `skill://<name>` (or a file under it) or of `.../<name>/SKILL.md` (OMP `read`, Hermes `read_file`, Claude Code `Read`), or a Hermes `skill_view` call. Each use is timed by its turn, so `--since` and `--until` bound the uses. `--json` puts one entry per skill in `meta.skills` (`name uses invoked read sessions threads first_ts last_ts last_ref`, `threads` split into main, subagent, advisor and sidechain), sorted by uses then name.
+Skills: `uses` = `invoked` + `read`. An invocation is an OMP skill sub-turn (`[skill <name>]`) or a Claude Code `Skill` call. A read is a file read of `skill://<name>` (or a file under it) or of `.../<name>/SKILL.md` (OMP `read`, Hermes/Antigravity `read_file`, Claude Code `Read`), or a Hermes `skill_view` call. Each use is timed by its turn, so `--since` and `--until` bound the uses. `--json` puts one entry per skill in `meta.skills` (`name uses invoked read sessions threads first_ts last_ts last_ref`, `threads` split into main, subagent, advisor and sidechain), sorted by uses then name.
 
 The index catches up before every answer (about 50 ms when nothing changed), so live sessions are searchable. Pass `--no-index` to skip that, `--view index` to see the report, `--rebuild` to purge and rebuild.
 

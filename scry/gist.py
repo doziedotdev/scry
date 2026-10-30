@@ -18,7 +18,7 @@ _WS_RE = re.compile(r"\s+")
 _HEAD_RE = re.compile(r"^(?:#{1,6}\s+|[-*]\s+|>\s+|\d+\.\s+)")
 _PATH_RE = re.compile(r"(?<![\w/])(?:~|/)?(?:[\w.@-]+/)+[\w.@-]+(?:\.[\w-]+)?|(?<![\w/])[\w.@-]+\.(?:py|ts|js|tsx|jsx|md|json|toml|yaml|yml|sh|sql|html|css|go|rs|txt|csv|jsonl|log)\b")
 _FREE_TEXT_KEYS = frozenset({"content", "code", "text", "message", "prompt", "input", "body", "task", "context", "description", "i", "intent", "q", "query", "pattern"})
-_ARG_KEYS = ("i", "intent", "path", "file", "paths", "pattern", "command", "cmd", "query", "q", "url", "title", "name", "description", "task", "message", "prompt", "code", "content")
+_ARG_KEYS = ("i", "intent", "path", "Path", "file", "paths", "pattern", "command", "CommandLine", "cmd", "query", "q", "url", "title", "name", "description", "task", "message", "Message", "prompt", "Prompt", "code", "content", "Content")
 
 
 def squash(text: str, limit: int = GIST_CHARS) -> str:
@@ -96,7 +96,7 @@ def call_paths(call: Call, *, explicit_only: bool = False) -> tuple[str, ...]:
     args = _parse_args(call.args)
     found: list[str] = []
     if isinstance(args, dict):
-        for key in ("path", "file", "file_path", "filePath", "target", "paths", "files"):
+        for key in ("path", "Path", "file", "file_path", "filePath", "target", "paths", "files"):
             value = args.get(key)
             if isinstance(value, str):
                 found.append(value)

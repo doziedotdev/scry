@@ -71,7 +71,7 @@ OPTIONS = {
     # name: (takes value, help)
     "ref": (True, GRAMMAR),
     "view": (True, "auto | " + " | ".join(v for v in VIEWS if v != "auto")),
-    "store": (True, "omp | claude | cursor | hermes | hermes.<bank> | all; comma-separated; default: every store not excluded in config"),
+    "store": (True, "omp | claude | cursor | hermes | hermes.<bank> | agy | all; comma-separated; default: every store not excluded in config"),
     "project": (True, "path prefix or folder name"),
     "speaker": (True, "user | assistant | tool | summary | system | thinking | mail | any; comma-separated"),
     "since": (True, "24h 7d 2w 3m 1y or YYYY-MM-DD"),
@@ -146,6 +146,13 @@ class Args:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
     try:
         args = Args(sys.argv[1:] if argv is None else argv)
     except SystemExit as exc:

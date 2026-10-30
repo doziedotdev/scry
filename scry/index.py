@@ -37,7 +37,7 @@ PARALLEL_MIN = 8  # stale sessions before a pass fans out to worker processes
 # an explicit invocation is an OMP ``[skill <name>]`` sub-turn or a Claude Code
 # ``Skill`` call; a read is a file read of ``skill://<name>[/...]`` or of
 # ``.../<name>/SKILL.md``, or a Hermes ``skill_view`` call.
-SKILL_READ_TOOLS = {"read": "path", "read_file": "path", "Read": "file_path"}  # OMP, Hermes, Claude Code
+SKILL_READ_TOOLS = {"read": ("path",), "read_file": ("path", "Path"), "Read": ("file_path",)}  # OMP, Hermes, Antigravity, Claude Code
 SKILL_INVOKE_TOOLS = {"Skill"}  # Claude Code: {"skill": name}; older builds used {"command": name}
 SKILL_VIEW_TOOLS = {"skill_view"}  # Hermes: {"name": name}
 _SKILL_PROMPT = re.compile(r"^\[skill ([^\]\s]+)\]")
@@ -354,12 +354,16 @@ class Index:
         for path in dirs:
             try:
                 if stamps.get("dir:" + path) != str(os.stat(path).st_mtime_ns):
+                    if store.harness == "agy":
+                        return None  # AGY child subagents live in sibling brain/<child-id>/ dirs
                     owner = self._root_of_dir(store.name, path)
                     if owner is None:
                         return None  # a directory nobody owns changed: maybe a new session
                     roots.add(owner)  # a session's own directory changed: rediscover that session (new agent, new artifact)
             except OSError:
                 return None
+        if store.harness == "agy":
+            return None if roots else set()
         return roots
 
     def _root_of_dir(self, store_name: str, directory: str) -> str | None:
@@ -867,10 +871,10 @@ def skill_of_call(tool: str, args: str) -> tuple[str, str] | None:
     if tool in SKILL_VIEW_TOOLS:
         name = data.get("name")
         return (name.strip(), "read") if isinstance(name, str) and name.strip() else None
-    path = data.get(SKILL_READ_TOOLS[tool])
+    path = next((data.get(k) for k in SKILL_READ_TOOLS[tool] if isinstance(data.get(k), str)), None)
     if not isinstance(path, str):
         return None
-    path = path.strip()
+    path = path.strip().replace("\\", "/")
     match = _SKILL_URL.match(path) or _SKILL_FILE.search(path)
     return (match.group(1), "read") if match else None
 

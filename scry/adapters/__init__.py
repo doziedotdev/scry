@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .base import Adapter, StoreSpec
 
-HARNESSES = ("omp", "claude", "hermes", "cursor")
+HARNESSES = ("omp", "claude", "hermes", "cursor", "agy")
 
 
 def get_adapter(harness: str) -> Adapter:
@@ -30,6 +30,10 @@ def get_adapter(harness: str) -> Adapter:
         from .cursor import CursorAdapter
 
         return CursorAdapter()
+    if harness in ("agy", "antigravity"):
+        from .agy import AgyAdapter
+
+        return AgyAdapter()
     raise KeyError(f"unknown harness {harness!r}; known: {', '.join(HARNESSES)}")
 
 
@@ -59,6 +63,10 @@ def local_stores(cfg) -> list[StoreSpec]:
         if profiles.is_dir():
             banks.extend((f"hermes.{p.name}", p / "state.db") for p in sorted(profiles.iterdir()) if p.is_dir())
         found.extend(StoreSpec(name, "hermes", str(path), path.is_file()) for name, path in banks)
+    agy = getattr(cfg, "agy_brain_dir", None)
+    if agy:
+        agy = Path(agy).expanduser()
+        found.append(StoreSpec("agy", "agy", str(agy), agy.is_dir(), metadata=str(getattr(cfg, "agy_summaries_db", "") or "")))
     return found
 
 

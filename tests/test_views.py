@@ -75,7 +75,7 @@ def test_every_view_fits_its_budget_and_every_ref_resolves(index, renderer, budg
         assert len(text) <= budget, f"{name} at budget {budget}: {len(text)} chars"
         assert text.strip(), f"{name} rendered nothing"
         head = text.splitlines()[0]
-        assert head.startswith(("transcripts:", "projects:", "sessions", "find ", "tree ", "walk ", "read ", "links ", "omp:", "claude:", "cursor:", "hermes")), f"{name} at budget {budget} lost its header: {head!r}"
+        assert head.startswith(("transcripts:", "projects:", "sessions", "find ", "tree ", "walk ", "read ", "links ", "omp:", "claude:", "cursor:", "hermes", "agy:")), f"{name} at budget {budget} lost its header: {head!r}"
         for token in REF_RE.findall(text):
             if "<" in token:  # templates like ref=<session>
                 continue
