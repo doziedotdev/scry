@@ -172,8 +172,12 @@ def short_path(path: str | None, home: str | None = None) -> str:
     home = home or os.path.expanduser("~")
     if path == home:
         return "~"
-    if path.startswith(home + "/"):
-        return "~/" + path[len(home) + 1 :]
+    norm_path = path.replace("\\", "/")
+    norm_home = home.replace("\\", "/").rstrip("/")
+    if norm_path.lower() == norm_home.lower():
+        return "~"
+    if norm_path.lower().startswith(norm_home.lower() + "/"):
+        return "~/" + norm_path[len(norm_home) + 1 :]
     return path
 
 

@@ -50,6 +50,30 @@ def task_gist(text: str, limit: int = 200) -> str:
     return squash(fallback, limit)
 
 
+def summary_gist(text: str, limit: int = 600) -> str:
+    """Compact multi-line summary text into a single readable line, skipping generic markdown headers."""
+    generic = {
+        "task overview", "progress", "key findings", "errors & fixes",
+        "active context", "next steps", "commitments & constraints",
+        "resuming from a compaction", "user requests", "core requests:", "core request:",
+    }
+    parts: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        cleaned = _HEAD_RE.sub("", line.strip()).strip("*- ")
+        cleaned = re.sub(r"^\*\*([^*]+)\*\*:?\s*", r"\1: ", cleaned).strip()
+        if not cleaned or cleaned.lower().rstrip(":") in generic:
+            continue
+        parts.append(cleaned)
+        used += len(cleaned) + 3
+        if used >= limit:
+            break
+    if not parts:
+        return squash(text, limit)
+    joined = _WS_RE.sub(" ", " · ".join(parts))
+    return joined if len(joined) <= limit else joined[: limit - 1].rstrip() + "…"
+
+
 def call_gist(call: Call, limit: int = 80) -> str:
     """``name: intent`` when the harness gave one, otherwise ``name key=value`` from the args."""
     if call.intent:

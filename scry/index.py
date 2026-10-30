@@ -23,7 +23,7 @@ from typing import Iterator
 
 from .adapters.base import Checkpoint, SessionSource, StoreSpec, ThreadRead, ThreadSource
 from .config import Config, ensure_private_dirs
-from .gist import call_gist, call_paths, squash, task_gist, turn_gist
+from .gist import call_gist, call_paths, squash, summary_gist, task_gist, turn_gist
 from .model import THREAD_KINDS, Call, Ref, RefError, SessionMeta, ThreadMeta, Turn, TurnRange
 from .redact import redact
 
@@ -230,11 +230,12 @@ class Index:
 
     # ---------------------------------------------------------------- indexing
 
-    def run(self, stores: list[StoreSpec] | None = None, *, rebuild: bool = False, time_cap: float | None = None) -> IndexReport:
+    def run(self, stores: list[StoreSpec] | None = None, *, rebuild: bool = False, time_cap: float | None = None, keep_unlisted: bool = False) -> IndexReport:
         """Bring the index up to date. ``time_cap`` seconds stops early and reports ``behind``.
 
-        ``stores`` is the complete configured set: a store indexed earlier but absent from it
-        was removed from the config and is dropped with everything under it.
+        ``stores`` is the complete configured set unless ``keep_unlisted`` is True: a store
+        indexed earlier but absent from it was removed from the config and is dropped with
+        everything under it.
         """
         from .adapters import discover_stores, get_adapter
 
@@ -295,7 +296,8 @@ class Index:
                 # Recompute after the pass: files that grew during it must not be marked done.
                 self._specs[store.name] = store
                 self._save_store_signature(store.name, self._query_known_files(store.name))
-        self._drop_unconfigured_stores({store.name for store in stores}, report)
+        if not keep_unlisted:
+            self._drop_unconfigured_stores({store.name for store in stores}, report)
         report.seconds = time.monotonic() - started
         return report
 
@@ -609,7 +611,7 @@ class Index:
                 elif row["speaker"] == "assistant":
                     last_assistant, last_assistant_ord = squash(row["text"], 400) or row["gist"], row["ordinal"]
                 elif row["speaker"] == "summary":
-                    summary, summary_ord = squash(row["text"], 600), row["ordinal"]
+                    summary, summary_ord = summary_gist(row["text"], 600), row["ordinal"]
                 if row["calls_json"] != "[]":
                     for call in json.loads(row["calls_json"]):
                         tools[call["name"]] += 1

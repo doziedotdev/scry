@@ -308,3 +308,142 @@ def test_agy_incremental(tmp_path: Path) -> None:
         (full.checkpoint.ordinal + 1, "user", "Follow-up question.")
     ]
     assert not adapter.read_thread(source, thread, resumed.checkpoint).turns
+
+
+def test_agy_stress_edge_cases(tmp_path: Path) -> None:
+    """Stress test canceled background tasks, GENERIC trailing SYSTEM_MESSAGE stripping,
+    duplicate RUNNING steps, DB-less subagent fallback, role collision deduplication,
+    and Windows URI normalization."""
+    brain = tmp_path / "brain"
+    main_dir = brain / "agy-stress-root"
+    _write_jsonl(main_dir / ".system_generated" / "logs" / "transcript_full.jsonl", [
+        {
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "status": "DONE",
+            "created_at": "2026-10-30T12:00:00Z",
+            "content": "<USER_REQUEST>\nRun two parallel researchers and cancel a slow task.\n</USER_REQUEST>",
+        },
+        {
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-10-30T12:00:02Z",
+            "tool_calls": [
+                {
+                    "name": "invoke_subagent",
+                    "args": {"Model": "inherit", "Prompt": "First worker task.", "Role": "Worker", "TypeName": "research"},
+                },
+                {
+                    "name": "invoke_subagent",
+                    "args": {"Model": "pro", "Prompt": "Second worker task.", "Role": "Worker", "TypeName": "research"},
+                },
+                {
+                    "name": "edit_file",
+                    "args": {"Path": "C:\\work\\demo.py", "Target": "a", "Replacement": "b"},
+                },
+            ],
+        },
+        {
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "RUNNING",
+            "created_at": "2026-10-30T12:00:03Z",
+            "content": 'Created the following subagent:\n{\n  "conversationId": "agy-worker-1"\n}',
+        },
+        {
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "RUNNING",
+            "created_at": "2026-10-30T12:00:03Z",
+            "content": 'Created the following subagent:\n{\n  "conversationId": "agy-worker-1"\n}',
+        },
+        {
+            "step_index": 3,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "DONE",
+            "created_at": "2026-10-30T12:00:04Z",
+            "content": 'Created the following subagent:\n{\n  "conversationId": "agy-worker-2"\n}',
+        },
+        {
+            "step_index": 4,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "DONE",
+            "created_at": "2026-10-30T12:00:05Z",
+            "content": (
+                "Made 1 replacement in C:\\work\\demo.py.\n\n"
+                "The following is a <SYSTEM_MESSAGE> not actually sent by the user. "
+                "It is provided by the system as important information to pay attention to.\n\n"
+                "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-30T12:00:05Z "
+                "sender=agy-stress-root/task-99 priority=MESSAGE_PRIORITY_LOW "
+                'content=Task id "agy-stress-root/task-99" was canceled with result:\n'
+                "Tool execution was canceled\n</SYSTEM_MESSAGE>"
+            ),
+        },
+        {
+            "step_index": 5,
+            "source": "SYSTEM",
+            "type": "SYSTEM_MESSAGE",
+            "status": "DONE",
+            "created_at": "2026-10-30T12:00:06Z",
+            "content": (
+                "The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n"
+                "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-30T12:00:05Z "
+                "sender=agy-stress-root/task-99 priority=MESSAGE_PRIORITY_LOW "
+                'content=Task id "agy-stress-root/task-99" was canceled with result:\n'
+                "Tool execution was canceled\n</SYSTEM_MESSAGE>"
+            ),
+        },
+    ])
+
+    for cid, prompt in (("agy-worker-1", "First worker task."), ("agy-worker-2", "Second worker task."), ("agy-orphan-child", "Recovered via step 0 sender.")):
+        _write_jsonl(brain / cid / ".system_generated" / "logs" / "transcript.jsonl", [
+            {
+                "step_index": 0,
+                "source": "SYSTEM",
+                "type": "SYSTEM_MESSAGE",
+                "status": "DONE",
+                "created_at": "2026-10-30T12:00:07Z",
+                "content": (
+                    "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-30T12:00:07Z "
+                    f"sender=agy-stress-root priority=MESSAGE_PRIORITY_HIGH content={prompt}\n</SYSTEM_MESSAGE>"
+                ),
+            },
+            {
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": "2026-10-30T12:00:08Z",
+                "content": "Done.",
+            },
+        ])
+
+    # Notice: no SQLite DB passed at all! Everything must resolve from transcripts alone.
+    adapter = AgyAdapter()
+    store = StoreSpec("agy", "agy", str(brain), True)
+    report = check_store(adapter, store)
+    assert set(report.sessions) == {"agy-stress-root"}
+    tree = report.sessions["agy-stress-root"]
+    assert set(tree) == {
+        (),
+        ("Worker",),
+        ("Worker-agy-work",),
+        ("sub-agy-orph",),
+    }
+    main_turns = tree[()].turns
+    # Duplicate RUNNING step_index=2 deduplicated; trailing <SYSTEM_MESSAGE> stripped from step 4;
+    # canceled task at step 5 classified as tool (background_task, is_error=True), not mail!
+    assert [t.speaker for t in main_turns] == ["user", "assistant", "tool", "tool", "tool", "tool"]
+    assert main_turns[4].tool == "edit_file"
+    assert "<SYSTEM_MESSAGE>" not in main_turns[4].text
+    assert main_turns[5].tool == "background_task"
+    assert main_turns[5].call_id == "agy-stress-root/task-99"
+    assert main_turns[5].is_error is True
+

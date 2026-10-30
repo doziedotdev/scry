@@ -26,7 +26,12 @@ _SYS_MSG_RE = re.compile(
 )
 _SUBAGENT_CREATED_RE = re.compile(r'"conversationId"\s*:\s*"([A-Za-z0-9_-]+)"')
 _TASK_RUNNING_RE = re.compile(r"Tool is running as a background task with task id:\s*(\S+)")
-_TASK_DONE_RE = re.compile(r'^Task id "([^"]+)" finished with result:\s*', re.S)
+_TASK_DONE_RE = re.compile(r'^Task id "([^"]+)" (?:finished|was canceled) with result:\s*', re.S)
+_GENERIC_TAIL_SYS_RE = re.compile(
+    r"\n\nThe following is a <SYSTEM_MESSAGE> not actually sent by the user\."
+    r"[^\n]*\n\n<SYSTEM_MESSAGE>\s*\[Message\].*</SYSTEM_MESSAGE>\s*\Z",
+    re.S,
+)
 
 
 def _transcript_file(brain_dir: Path) -> Path | None:
@@ -49,6 +54,8 @@ def _uri_to_path(uri: str) -> str | None:
         path = unquote(parsed.path or "")
         if re.match(r"^/[A-Za-z]:/", path):
             path = path[1:]
+        if len(path) >= 2 and path[1] == ":" and path[0].islower():
+            path = path[0].upper() + path[1:]
         return path.rstrip("/") or "/"
     return text
 
@@ -172,6 +179,7 @@ def _turn_from_row(row: dict, ordinal: int, offset: int, state: dict) -> Turn | 
             tool_name, call_id = pending.pop(0)
         else:
             tool_name, call_id = "tool", (f"step-{step_index}-0" if step_index is not None else None)
+        content = _GENERIC_TAIL_SYS_RE.sub("", content)
         err = _is_generic_error(row, content)
         if not content and row.get("error"):
             content = str(row["error"])
@@ -196,10 +204,14 @@ def _turn_from_row(row: dict, ordinal: int, offset: int, state: dict) -> Turn | 
             if ordinal == 1 and state.get("is_child") and "/task-" not in sender:
                 return Turn(ordinal, "system", body, ts=ts, native_id=native_id, offset=offset)
             m_task = _TASK_DONE_RE.match(body)
-            if m_task:
-                task_id = m_task.group(1)
-                rest = body[m_task.end():].strip()
-                err = "Command exited with code " in rest and "Command exited with code 0." not in rest
+            if m_task or "/task-" in sender:
+                task_id = m_task.group(1) if m_task else sender
+                rest = body[m_task.end():].strip() if m_task else body
+                err = (
+                    ("Command exited with code " in rest and "Command exited with code 0." not in rest)
+                    or "was canceled with result:" in body
+                    or "Tool execution was canceled" in rest
+                )
                 return Turn(ordinal, "tool", rest or body, ts=ts, tool="background_task",
                             call_id=task_id, is_error=err, native_id=native_id, offset=offset)
             return Turn(ordinal, "mail", f"from agy:{sender}: {body}", ts=ts, native_id=native_id, offset=offset)
@@ -274,7 +286,7 @@ class AgyAdapter:
         if cached and cached[0] == fingerprint:
             return cached[1]
         memo = getattr(self, "memo", None)
-        memo_key = f"{location}#{'child' if is_child else 'main'}"
+        memo_key = f"{location}#{'child' if is_child else 'main'}#v2"
         if memo is not None:
             stored = memo.get(memo_key, fingerprint)
             if stored is not None:
@@ -428,7 +440,7 @@ class AgyAdapter:
         title = str(row.get("title") or "")
         project = _workspace_path(str(row.get("workspace_uris") or ""))
         raw_status = str(row.get("status") or "")
-        status = "live" if "RUNNING" in raw_status else ("" if not raw_status else "ended")
+        status = "live" if "RUNNING" in raw_status else ("ended" if raw_status and "IDLE" not in raw_status else "")
 
         brain_dir = Path(source.root).parents[2]
         artifacts: list[Artifact] = []

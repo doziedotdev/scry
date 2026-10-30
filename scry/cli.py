@@ -207,7 +207,8 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
         searched = _select_stores(cfg, all_stores, store)
         note = ""
         if view == "index":
-            report = index.run(all_stores, rebuild=rebuild)
+            target_stores = searched if store else all_stores
+            report = index.run(target_stores, rebuild=rebuild, keep_unlisted=bool(store))
             lines = [f"index {'rebuilt' if rebuild else 'updated'} in {report.seconds:.1f}s: {report.sessions_seen} sessions seen, {report.threads_updated} threads read, +{report.turns_added} turns, {report.sessions_removed} removed"]
             lines.extend(f"  ! {e}" for e in report.errors[:10])
             renderer = Renderer(index, cfg)
