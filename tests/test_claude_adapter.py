@@ -75,3 +75,44 @@ def test_claude_incremental(tmp_path):
     reset = adapter.read_thread(source, source.threads[0], first.checkpoint)
     assert reset.reset
     assert [(turn.ordinal, turn.text) for turn in reset.turns] == [(1, "Restart")]
+
+
+def test_claude_question_answers_are_user_turns(tmp_path):
+    location = tmp_path / "claude"
+    shutil.copytree(FIXTURE, location)
+    path = location / "-home-synthetic-project" / "session-002.jsonl"
+    base = {"isSidechain": False, "sessionId": "session-002", "timestamp": "2026-08-01T12:01:00Z"}
+    questions = [{"question": "Which rate?", "header": "Rate", "options": [{"label": "2%"}, {"label": "3%"}]},
+                 {"question": "Who leads?", "header": "Lead", "options": [{"label": "Favour"}]}]
+    rows = [
+        {"type": "assistant", "uuid": "q-a", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "ask-1", "name": "AskUserQuestion", "input": {"questions": questions}}]}},
+        {"type": "user", "uuid": "q-u", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "ask-1",
+             "content": 'The user answered: "Which rate?"="2%". Read the answers carefully.'}]},
+         "toolUseResult": {"questions": questions, "answers": {"Which rate?": "2%", "Who leads?": "Not sure yet, maybe Oge"},
+                           "annotations": {"Who leads?": {"notes": "ask Favour first"}}}},
+        {"type": "assistant", "uuid": "d-a", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "ask-2", "name": "AskUserQuestion", "input": {"questions": questions}}]}},
+        {"type": "user", "uuid": "d-u", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "ask-2", "is_error": True, "content": "The user declined to answer."}]}},
+        {"type": "assistant", "uuid": "r-a", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "read-1", "name": "Read", "input": {"file_path": "/x"}}]}},
+        {"type": "user", "uuid": "r-u", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "read-1", "content": "file text"}]}},
+    ]
+    with path.open("a") as handle:
+        for row in rows:
+            handle.write(json.dumps({**base, **row}) + "\n")
+    adapter = ClaudeAdapter()
+    source = next(s for s in adapter.discover(StoreSpec("claude", "claude", str(location))) if s.session_id == "session-002")
+    turns = adapter.read_thread(source, source.threads[0], None).turns
+    assert [(t.speaker, t.tool, t.is_error) for t in turns[2:]] == [
+        ("assistant", None, False), ("user", "AskUserQuestion", False),
+        ("assistant", None, False), ("tool", "AskUserQuestion", True),
+        ("assistant", None, False), ("tool", "Read", False)]
+    answer = turns[3]
+    assert answer.call_id == "ask-1"
+    assert answer.text.splitlines() == ["2%  ← Which rate?",
+                                        'Not sure yet, maybe Oge (note: {"notes":"ask Favour first"})  ← Who leads?']
+    assert turns[5].text == "The user declined to answer."

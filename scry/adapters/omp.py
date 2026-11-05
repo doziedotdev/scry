@@ -1,4 +1,8 @@
-"""OMP JSONL sessions, named workers, advisors, and adjacent artifacts."""
+"""OMP JSONL sessions, named workers, advisors, and adjacent artifacts.
+
+An ``ask`` result is the user's answer, so it is a user turn built from its ``details``
+(the text content can be a compaction placeholder); an interrupted ask stays a tool error.
+"""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -8,10 +12,12 @@ import re
 
 from ..model import Artifact, Call, SessionMeta, ThreadMeta, Turn
 from .base import (
-    Checkpoint, SessionSource, StoreSpec, ThreadRead, ThreadSource,
+    Checkpoint, SessionSource, StoreSpec, ThreadRead, ThreadSource, answer_text,
     compact_json, decode_project_slug, file_fingerprint, first_line,
     iter_jsonl_records, parse_timestamp, plan_jsonl_read, record_guard,
 )
+
+_QUESTION_TOOL = "ask"  # its result is the user's answer, so it becomes a user turn
 
 
 def _text(content):
@@ -21,6 +27,28 @@ def _text(content):
         return ""
     return "\n".join(b["text"] for b in content if isinstance(b, dict)
                      and b.get("type") == "text" and isinstance(b.get("text"), str))
+
+
+def _answers(details) -> str:
+    """The user's answers from an ``ask`` result's details, or "" when they hold none.
+
+    One question keeps its fields at the top level; a multi-question ask lists them in
+    ``results``. Selected options are joined, and typed text follows them.
+    """
+    if not isinstance(details, dict):
+        return ""
+    entries = details["results"] if isinstance(details.get("results"), list) else [details]
+    pairs = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("question"), str):
+            continue
+        selected = entry.get("selectedOptions")
+        answer = ", ".join(str(o) for o in selected) if isinstance(selected, list) else ""
+        custom = entry.get("customInput")
+        if isinstance(custom, str) and custom.strip():
+            answer = f"{answer}; {custom}" if answer else custom
+        pairs.append((entry["question"], answer or "(no answer)"))
+    return answer_text(pairs)
 
 
 def _sub_turn(row, ordinal, sub, offset):
@@ -92,6 +120,12 @@ def _turn(row, ordinal, offset):
     if message.get("synthetic") or row.get("synthetic") or (role == "user" and attribution is not None and not human):
         speaker = "system"
     content = message.get("content")
+    text = _text(content)
+    tool = message.get("toolName") if speaker == "tool" else None
+    call_id = message.get("toolCallId") if speaker == "tool" else None
+    is_error = bool(message.get("isError"))
+    if tool == _QUESTION_TOOL and not is_error:
+        speaker, text = "user", _answers(message.get("details")) or text
     thinking, calls = [], []
     if isinstance(content, list):
         for block in content:
@@ -103,15 +137,14 @@ def _turn(row, ordinal, offset):
                 calls.append(Call(str(block.get("name") or ""),
                                   compact_json(block.get("arguments", {})),
                                   str(block.get("intent") or ""), block.get("id")))
-    return Turn(ordinal, speaker, _text(content), "\n".join(thinking), tuple(calls),
+    return Turn(ordinal, speaker, text, "\n".join(thinking), tuple(calls),
                 parse_timestamp(message.get("timestamp")) or parse_timestamp(row.get("timestamp")),
-                message.get("toolName") if speaker == "tool" else None,
-                message.get("toolCallId") if speaker == "tool" else None,
-                bool(message.get("isError")), row.get("id") or message.get("id"), offset)
+                tool, call_id, is_error, row.get("id") or message.get("id"), offset)
 
 
 class OmpAdapter:
     harness = "omp"
+    version = "1"  # bump when the same files must map to different turns or threads
 
     def __init__(self):
         self._facts = {}

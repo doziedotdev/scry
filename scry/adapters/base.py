@@ -204,6 +204,15 @@ def compact_json(value: Any, limit: int | None = None) -> str:
     return text if limit is None or len(text) <= limit else text[:limit] + "…"
 
 
+def answer_text(pairs: list[tuple[str, str]]) -> str:
+    """A question tool's answers as the user's own turn: one line per answer, then its question.
+
+    The answer leads so a turn's gist shows what was decided; the question follows so one
+    search can match both.
+    """
+    return "\n".join(f"{answer}  ← {question}" if question else answer for question, answer in pairs)
+
+
 def first_line(text: str, limit: int = 200) -> str:
     """The first substantive line of a task or prompt.
 

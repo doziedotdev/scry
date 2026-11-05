@@ -16,6 +16,8 @@ Cursor transcripts hold no tool results and no compaction rows; `turn_ended` mar
 
 OMP `custom_message` rows with `display: true` become sub-turns when their `customType` is `skill-prompt` (speaker `user`, text `[skill <name>] <args>`, falling back to the text after the last `\nUser: ` when `details.args` is absent) or `bus:mail` (speaker `mail`, one `from <seat> (<relation>, <mode>, omp:<session>): <body>` line per mail). `bus:card`, `irc:incoming` and every other custom row stay unindexed.
 
+A question tool's answer is the user's own words, so it is a `user` turn rather than `tool`: a Claude Code `AskUserQuestion` result, built from `toolUseResult.answers` (with any `annotations` after the answer they belong to), and an OMP `ask` result, built from `details` or, for several questions, `details.results` (selected options joined, typed text after them; OMP's text content can be a compaction placeholder). Each line reads `<answer>  ← <question>`, and `tool` and `call_id` still link the turn to its call. A declined or interrupted question stays a tool error.
+
 ## Incrementality
 
 The core keeps a checkpoint per thread source: fingerprint (`size:mtime_ns` for files, `maxid:N` for databases), byte offset after the last complete record, last integer ordinal, last native id, a guard hash of the bytes before the offset, and the sub-turn count after that ordinal. An unchanged fingerprint skips the thread; a shorter file or a guard mismatch (in-place replacement) resets it; otherwise the adapter resumes at the offset (files) or after the native id (databases). Incomplete trailing lines wait for the next pass.

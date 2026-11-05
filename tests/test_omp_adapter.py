@@ -65,3 +65,42 @@ def test_omp_incremental(tmp_path):
     reset = adapter.read_thread(source, thread, resumed.checkpoint)
     assert reset.reset
     assert [(t.ordinal, t.text) for t in reset.turns] == [(1, "One more question.")]
+
+
+def test_omp_ask_answers_are_user_turns(tmp_path):
+    copied = tmp_path / "omp"
+    shutil.copytree(FIXTURES, copied)
+    path = copied / "-work-synthetic" / "2026-09-02T10-00-00-000Z_fixture002.jsonl"
+
+    def result(call_id, content, details=None, error=False):
+        message = {"role": "toolResult", "toolCallId": call_id, "toolName": "ask", "isError": error,
+                   "content": [{"type": "text", "text": content}], "timestamp": 1788000000000}
+        if details is not None:
+            message["details"] = details
+        return {"type": "message", "id": call_id + "-r", "message": message}
+
+    rows = [
+        result("one", "[shaken ~40 tokens]", {"question": "Repair now?", "options": ["Yes", "Hold"],
+                                               "multi": False, "selectedOptions": ["Hold"]}),
+        result("many", "[shaken ~79 tokens]", {"results": [
+            {"id": "a", "question": "Which levels?", "options": ["None", "Employee"], "multi": True,
+             "selectedOptions": ["None", "Employee"], "customInput": "and Partner"},
+            {"id": "b", "question": "Which login?", "options": ["Service"], "multi": False,
+             "selectedOptions": [], "customInput": "my own creds for now"}]}),
+        result("cut", "Ask interrupted by message", {}, error=True),
+        {"type": "message", "id": "read-r", "message": {"role": "toolResult", "toolCallId": "read", "toolName": "read",
+                                                        "content": [{"type": "text", "text": "file text"}]}},
+    ]
+    with path.open("a") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    adapter = OmpAdapter()
+    source = next(s for s in adapter.discover(StoreSpec("omp", "omp", str(copied))) if s.session_id == "fixture002")
+    turns = adapter.read_thread(source, source.thread(()), None).turns[-4:]
+    assert [(t.speaker, t.tool, t.call_id, t.is_error) for t in turns] == [
+        ("user", "ask", "one", False), ("user", "ask", "many", False),
+        ("tool", "ask", "cut", True), ("tool", "read", "read", False)]
+    assert turns[0].text == "Hold  ← Repair now?"
+    assert turns[1].text.splitlines() == ["None, Employee; and Partner  ← Which levels?",
+                                          "my own creds for now  ← Which login?"]
+    assert turns[2].text == "Ask interrupted by message"

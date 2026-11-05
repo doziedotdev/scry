@@ -4,6 +4,8 @@ Observed layout: <project>/<session>.jsonl and
 <project>/<session>/subagents/workflows/<run>/agent-*.jsonl.
 Discovery also accepts subagents/**/agent-*.jsonl. In-file sidechains use a
 #sidechain=<root uuid> logical location. Local-command text is kept as system.
+An AskUserQuestion result is the user's answer, so it is a user turn built from
+``toolUseResult.answers``; a declined question stays a tool error.
 
 A session file also holds transport rows. ``api-request-blob`` copies a request's
 messages with no timestamp or uuid; they are not turns, so ``_records`` drops their
@@ -27,9 +29,9 @@ from typing import Any, Iterator
 
 from ..model import Artifact, Call, SessionMeta, ThreadMeta, Turn
 from .base import (
-    Checkpoint, SessionSource, StoreSpec, ThreadRead, ThreadSource, compact_json,
-    decode_project_slug, file_fingerprint, first_line, iter_jsonl_records,
-    parse_timestamp, plan_jsonl_read, record_guard,
+    Checkpoint, SessionSource, StoreSpec, ThreadRead, ThreadSource, answer_text,
+    compact_json, decode_project_slug, file_fingerprint, first_line,
+    iter_jsonl_records, parse_timestamp, plan_jsonl_read, record_guard,
 )
 
 _MARKER = "#sidechain="
@@ -44,6 +46,7 @@ _TASK_ID = re.compile(r"\bTask ID: (\S+)")
 _NOTIFIED_TASK = re.compile(r"<task-id>([^<\s]+)</task-id>")
 _SCRIPT_FIELD = re.compile(r"""^\s*(name|description):\s*(['"`])(.+?)\2\s*,?\s*(?://.*)?$""", re.M)
 _SCRIPT_PHASE = re.compile(r"""\{\s*title:\s*(['"`])(.+?)\1""")
+_QUESTION_TOOL = "AskUserQuestion"  # its result is the user's answer, so it becomes a user turn
 
 
 def _records(path: str) -> list[tuple[int, int, dict]]:
@@ -149,6 +152,25 @@ def _text(content: Any) -> str:
     return ""
 
 
+def _answers(result: Any) -> str:
+    """The user's answers from an AskUserQuestion ``toolUseResult``, or "" when it holds none.
+
+    Notes the user attached to a question are kept verbatim after its answer.
+    """
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict) or not answers:
+        return ""
+    notes = result.get("annotations")
+    notes = notes if isinstance(notes, dict) else {}
+    pairs = []
+    for question, answer in answers.items():
+        answer = answer if isinstance(answer, str) else compact_json(answer)
+        if note := notes.get(question):
+            answer = f"{answer} (note: {note if isinstance(note, str) else compact_json(note)})"
+        pairs.append((str(question), answer))
+    return answer_text(pairs)
+
+
 def _groups(records: list[tuple[int, int, dict]]) -> dict[str, str]:
     rows = {row["uuid"]: row for _, _, row in records if row.get("uuid")}
     roots: dict[str, str] = {}
@@ -224,9 +246,13 @@ def _turns(records: list[tuple[int, int, dict]], child: bool) -> list[Turn]:
         results = [b for b in blocks if b.get("type") == "tool_result"] if role == "user" else []
         for block in results:
             call_id = block.get("tool_use_id")
+            tool, is_error = names.get(call_id), bool(block.get("is_error"))
+            if tool == _QUESTION_TOOL and not is_error:
+                answered = _answers(row.get("toolUseResult")) or _text(block.get("content"))
+                turns.append(Turn(len(turns) + 1, "user", answered, tool=tool, call_id=call_id, **common))
+                continue
             turns.append(Turn(len(turns) + 1, "tool", _text(block.get("content")),
-                              tool=names.get(call_id), call_id=call_id,
-                              is_error=bool(block.get("is_error")), **common))
+                              tool=tool, call_id=call_id, is_error=is_error, **common))
         if role == "user" and (row.get("isMeta") or child or row.get("agentId")
                                or row.get("agentName") or row.get("attributionAgent")
                                or text.lstrip().startswith(_INJECTED)):
@@ -257,7 +283,7 @@ def _model(records):
 
 class ClaudeAdapter:
     harness = "claude"
-    version = "2"  # bump when the same files must map to different turns or threads
+    version = "3"  # bump when the same files must map to different turns or threads
 
     def __init__(self) -> None:
         self._files: dict[str, tuple] = {}

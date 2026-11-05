@@ -32,7 +32,7 @@ Any unique id prefix works, the store can be omitted when unambiguous, and a ref
 
 - Start with words or a ref; copy refs from the output; follow the `next:` line.
 - Output is capped by `budget` (default 4000 chars). Raise it only when a `more:` or `…` line says so; otherwise narrow with `since`, `project`, `store`, `speaker`.
-- `find` searches user, assistant, summary and mail text. For file paths, commands and function names use `speaker=tool`; for reasoning `speaker=thinking`; for everything `speaker=any`.
+- `find` searches user, assistant, summary and mail text; answers to question tools (Claude Code `AskUserQuestion`, OMP `ask`) are user text. For file paths, commands and function names use `speaker=tool`; for reasoning `speaker=thinking`; for everything `speaker=any`.
 - All words must be in one turn; the tool falls back to one session, then any word, and says which. Zero hits prints per-term counts so you know which word to drop.
 - Handing work to another agent: give the ref (`omp:01a07243@186`), not the text.
 - The index catches up on every call; live sessions are searchable within seconds.
