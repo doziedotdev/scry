@@ -36,5 +36,6 @@ Any unique id prefix works, the store can be omitted when unambiguous, and a ref
 - All words must be in one turn; the tool falls back to one session, then any word, and says which. Zero hits prints per-term counts so you know which word to drop.
 - Handing work to another agent: give the ref (`omp:01a07243@186`), not the text.
 - The index catches up on every call; live sessions are searchable within seconds.
+- A Claude Code workflow run is addressable: `claude:b9691bc1/wf_b7a58da6-b49` is its card, `@1` its name and phases, `@2` its script, then one turn per agent result and the final result. `view=tree` nests agents under their run with phase and label. Results are found by default; an agent ref without the run (`/agent-a0547d13`) still resolves.
 
 CLI: `scry WORDS...`, `scry REF`, `scry walk|tree|links|export REF`, `scry sessions|projects|live|skills`, `--json` for the `{schema, view, text, refs, meta}` envelope. Config: `~/.config/scry/config.toml`. Index: `~/.cache/scry/` (derived; safe to delete).

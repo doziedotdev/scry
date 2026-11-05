@@ -6,6 +6,7 @@ Three nouns, one address grammar:
     session  one root conversation in a store                           omp:01a07243
     agent    a child conversation inside a session (subagent, advisor,
              sidechain), named as the harness named it                  omp:01a07243/Scout1
+             A workflow run is a child too, with its agents below it    claude:b9691bc1/wf_b7a58da6-b49
     turn     one message, numbered from 1 inside its session or agent   omp:01a07243@186
 
     ref := [store ":"] session ["/" agent ("/" agent)*] ["@" turns]
@@ -25,7 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 SPEAKERS = ("user", "assistant", "tool", "system", "summary", "mail")
-THREAD_KINDS = ("main", "subagent", "advisor", "sidechain")
+THREAD_KINDS = ("main", "subagent", "advisor", "sidechain", "workflow")
 
 # ---------------------------------------------------------------------------
 # Refs

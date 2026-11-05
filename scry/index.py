@@ -248,20 +248,29 @@ class Index:
             if not store.exists:
                 continue
             report.stores.append(store.name)
+            failed = len(report.errors)  # a session that failed must be looked for again next pass
+            adapter = get_adapter(store.harness)
+            version = str(getattr(adapter, "version", ""))
+            stale_reader = version != self._adapter_version(store.name)
+            purge = rebuild or (stale_reader and bool(version))
             known = self._known_files(store.name)
             signature = store_signature(store, known)
-            if not rebuild and signature and signature == self._store_signature(store.name):
+            if not purge and signature and signature == self._store_signature(store.name):
                 continue  # nothing under this store changed since the last pass
-            roots = None if rebuild else self._changed_roots(store, known)
-            adapter = get_adapter(store.harness)
+            roots = None if purge else self._changed_roots(store, known)
             adapter.memo = Memo(self.db, store.harness)
             self.db.execute(
                 "INSERT INTO store(name, harness, location, indexed_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(name) DO UPDATE SET harness=excluded.harness, location=excluded.location, indexed_at=excluded.indexed_at",
                 (store.name, store.harness, store.location, time.time()),
             )
-            if rebuild:
+            if purge:
                 self.db.execute("DELETE FROM session WHERE store=?", (store.name,))
+                # The saved state describes what was just deleted: left in place, a capped or
+                # killed pass would look finished and the next one would skip the store.
+                self.db.execute("DELETE FROM meta WHERE key IN (?, ?, ?)", (f"sig:{store.name}", f"files:{store.name}", f"stamps:{store.name}"))
+            if version:  # saved now: a capped pass finishes by ordinary catch-up, not another purge
+                self.db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (f"adapter:{store.name}", version))
             try:
                 sources = _merge_duplicates(list(adapter.discover(store, roots)))
             except Exception as exc:  # a broken store must not hide the others
@@ -292,7 +301,7 @@ class Index:
             else:
                 removed = self.db.execute("DELETE FROM session WHERE store=?", (store.name,)).rowcount
             report.sessions_removed += max(0, removed)
-            if report.behind == 0:
+            if report.behind == 0 and len(report.errors) == failed:
                 # Recompute after the pass: files that grew during it must not be marked done.
                 self._specs[store.name] = store
                 self._save_store_signature(store.name, self._query_known_files(store.name))
@@ -309,12 +318,16 @@ class Index:
                 continue
             report.sessions_removed += max(0, self.db.execute("DELETE FROM session WHERE store=?", (name,)).rowcount)
             self.db.execute("DELETE FROM store WHERE name=?", (name,))
-            self.db.execute("DELETE FROM meta WHERE key=?", (f"sig:{name}",))
+            self.db.execute("DELETE FROM meta WHERE key IN (?, ?)", (f"sig:{name}", f"adapter:{name}"))
             self._specs.pop(name, None)
 
     def _needs_read(self, thread: ThreadSource) -> bool:
         row = self.db.execute("SELECT fingerprint FROM checkpoint WHERE location=?", (thread.location,)).fetchone()
         return row is None or row[0] != thread.fingerprint
+
+    def _adapter_version(self, name: str) -> str:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (f"adapter:{name}",)).fetchone()
+        return row[0] if row else ""
 
     def _store_signature(self, name: str) -> str:
         row = self.db.execute("SELECT value FROM meta WHERE key=?", (f"sig:{name}",)).fetchone()
@@ -621,7 +634,7 @@ class Index:
                             if p not in target:
                                 target.append(p)
         totals = self.db.execute(
-            "SELECT SUM(CASE WHEN t.id IS NOT NULL AND t.sub = 0 THEN 1 ELSE 0 END) AS turns, COUNT(DISTINCT th.id) AS threads, MAX(t.ts) AS last_ts FROM thread th LEFT JOIN turn t ON t.thread_pk=th.id WHERE th.session_pk=?",
+            "SELECT SUM(CASE WHEN t.id IS NOT NULL AND t.sub = 0 THEN 1 ELSE 0 END) AS turns, COUNT(DISTINCT CASE WHEN th.kind <> 'workflow' THEN th.id END) AS threads, MAX(t.ts) AS last_ts FROM thread th LEFT JOIN turn t ON t.thread_pk=th.id WHERE th.session_pk=?",
             (session_pk,),
         ).fetchone()
         act_ts = max(filter(None, (_fingerprint_mtime(row[0]) for row in self.db.execute(
@@ -659,11 +672,15 @@ class Index:
         thread = self.db.execute("SELECT id, path, turn_count FROM thread WHERE session_pk=? AND path=?", (session_pk, path)).fetchone()
         if thread is None and ref.agent:
             candidates = self.db.execute(
-                "SELECT id, path, turn_count FROM thread WHERE session_pk=? AND (lower(path) = lower(?) OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\') ORDER BY path",
+                "SELECT id, path, turn_count, kind FROM thread WHERE session_pk=? AND (lower(path) = lower(?) OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\') ORDER BY path",
                 (session_pk, path, like_prefix(path), "%/" + like_escape(path) + "%"),
             ).fetchall()
             if len(candidates) == 1:
                 thread = candidates[0]
+                bound = Ref(bound.store, bound.session, tuple(thread["path"].split("/")), ref.turns)
+            elif parents := [c for c in candidates if c["kind"] == "workflow" and all(
+                    o["path"] == c["path"] or o["path"].startswith(c["path"] + "/") for o in candidates)]:
+                thread = parents[0]  # a prefix of a workflow run also matches the agents below it
                 bound = Ref(bound.store, bound.session, tuple(thread["path"].split("/")), ref.turns)
             elif candidates:
                 raise RefError(f"{ref}: agent {path!r} is ambiguous: " + ", ".join(f"{bound.root()}/{c['path']}" for c in candidates[:8]))
@@ -792,7 +809,7 @@ class Index:
         for name, how, row in uses:
             entry = stats.get(name)
             if entry is None:
-                entry = stats[name] = {"name": name, "uses": 0, "invoked": 0, "read": 0, "sessions": set(), "threads": dict.fromkeys(THREAD_KINDS, 0),
+                entry = stats[name] = {"name": name, "uses": 0, "invoked": 0, "read": 0, "sessions": set(), "threads": dict.fromkeys((k for k in THREAD_KINDS if k != "workflow"), 0),
                                        "first_ts": None, "last_ts": None, "last": None}
             entry["uses"] += 1
             entry[how] += 1

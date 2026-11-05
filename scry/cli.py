@@ -217,6 +217,8 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
             report = index.run(all_stores, time_cap=INDEX_TIME_CAP)
             if report.note():
                 note = f"  ·  index: {report.note()}"
+            if report.behind:  # every view, not only those that print note: a capped upgrade hides sessions
+                print(f"scry: index still catching up: {report.note()}", file=sys.stderr)
         renderer = Renderer(index, cfg)
         since_ts = parse_when(since)
         until_ts = parse_when(until, end_of_day=True)

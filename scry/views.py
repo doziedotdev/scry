@@ -210,14 +210,28 @@ class Renderer:
         out.add(f"turns {main_int}" + (f" +{sub_extra} sub-turns" if sub_extra else "") + f"{with_agents}: {sp}")
         if tools:
             out.add("tools: " + " ".join(f"{k}×{v}" for k, v in list(tools.items())[:12]))
-        children = [t for t in threads if t["path"]]
+        runs = [t for t in threads if t["kind"] == "workflow"]
+        children = [t for t in threads if t["path"] and t["kind"] != "workflow"]
+        if runs:
+            out.add(f"workflows ({len(runs)}):")
+            landed = 0
+            for t in sorted(runs, key=lambda t: t["spawn_ordinal"] or 10**9)[:12]:
+                if out.add(self._agent_line(t, base)):
+                    refs.append(f"{base}/{t['path']}")
+                    landed += 1
+            if landed < len(runs):
+                out.add(f"  … {len(runs) - landed} more: view=tree", force=True)
         if children:
-            out.add(f"agents ({len(children)}):")
-            for t in children[:12]:
-                out.add(self._agent_line(t, base))
-                refs.append(f"{base}/{t['path']}")
-            if len(children) > 12:
-                out.add(f"  … {len(children) - 12} more: view=tree")
+            names = {t["path"] for t in runs}
+            direct = [t for t in children if t["path"].split("/")[0] not in names]
+            out.add(f"agents ({len(children)}" + (f", {len(children) - len(direct)} in workflows" if runs else "") + "):")
+            landed = 0
+            for t in direct[:12]:
+                if out.add(self._agent_line(t, base)):
+                    refs.append(f"{base}/{t['path']}")
+                    landed += 1
+            if landed < len(children):
+                out.add(f"  … {len(children) - landed} more: view=tree", force=True)
         if files.get("written"):
             out.add("files written: " + cut(" ".join(files["written"]), 300))
         if artifacts:
@@ -249,9 +263,13 @@ class Renderer:
         refs = [this_ref]
         if nested:
             out.add(f"agents ({len(nested)}):")
+            landed = 0
             for t in nested[:10]:
-                out.add(self._agent_line(t, base))
-                refs.append(f"{base}/{t['path']}")
+                if out.add(self._agent_line(t, base)):
+                    refs.append(f"{base}/{t['path']}")
+                    landed += 1
+            if landed < len(nested):
+                out.add(f"  … {len(nested) - landed} more: view=tree", force=True)
         turns = self.index.turns(resolved_thread := thread["id"], 1, thread["turn_count"], speakers=("user", "assistant", "summary"))
         first = next((t for t in turns if t["speaker"] in ("user", "system")), None) or (turns[0] if turns else None)
         last = next((t for t in reversed(turns) if t["speaker"] == "assistant"), None)
@@ -298,20 +316,28 @@ class Renderer:
         row = self.index.session_row(resolved.session_pk)
         threads = self.index.thread_rows(resolved.session_pk)
         base = self.sref(row)
-        out.add(f"tree {base}  {short_path(row['project'], self.home)}  {len(threads) - 1} agents")
+        runs = {t["path"]: t for t in threads if t["kind"] == "workflow"}
+        count = f"{len(threads) - 1 - len(runs)} agents" + (f" · {len(runs)} workflows" if runs else "")
+        out.add(f"tree {base}  {short_path(row['project'], self.home)}  {count}")
         refs = [base]
         main = next((t for t in threads if not t["path"]), None)
         if main is not None:
             out.add(f"  main  {main['turn_count']} turns  {fmt_span(main['started'], main['last_ts'], now=self.now)}  {main['model']}".rstrip())
         shown = 0
-        for t in sorted((t for t in threads if t["path"]), key=lambda t: (t["spawn_ordinal"] or 10**9, t["path"])):
+        def place(t):
+            """Spawn order; a run's agents directly below it, in the order they started."""
+            top = t["path"].split("/")[0]
+            run = runs.get(top)
+            return ((run or t)["spawn_ordinal"] or 10**9, top if run else t["path"], t["path"] != top, t["started"] or 0, t["path"])
+
+        for t in sorted((t for t in threads if t["path"]), key=place):
             if not out.add(self._agent_line(t, base)):
                 break
             refs.append(f"{base}/{t['path']}")
             shown += 1
         rest = len(threads) - 1 - shown
         if rest > 0:
-            out.add(f"  … {rest} more agents: raise budget", force=True)
+            out.add(f"  … {rest} more threads: raise budget", force=True)
         out.add(f"next: ref={base}/<agent> (card) · ref={base}/<agent> view=walk", force=True)
         return View("tree", out.text(), refs)
 
@@ -497,8 +523,13 @@ class Renderer:
             refs.append(parent_ref)
         children = [t for t in threads if t["path"].startswith((thread["path"] + "/") if thread["path"] else "") and t["path"] and t["path"] != thread["path"]]
         if children:
-            out.add(f"agents: " + " ".join(f"{base}/{t['path']}" for t in children[:12]))
-            refs.extend(f"{base}/{t['path']}" for t in children[:12])
+            depth = thread["path"].count("/") + 1 if thread["path"] else 0
+            shown = [t for t in children if t["path"].count("/") == depth][:12]
+            more = f"  … {len(children) - len(shown)} more: view=tree" if len(children) > len(shown) else ""
+            if out.add(f"agents: " + " ".join(f"{base}/{t['path']}" for t in shown) + more):
+                refs.extend(f"{base}/{t['path']}" for t in shown)
+            else:
+                out.add(f"  … {len(children)} agents: view=tree", force=True)
         if row["native_handle"]:
             out.add(f"native: {row['native_handle']}  source: {short_path(row['source'], self.home)}")
         artifacts = json.loads(row["artifacts"] or "[]")
