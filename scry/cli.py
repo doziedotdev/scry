@@ -73,6 +73,7 @@ OPTIONS = {
     "view": (True, "auto | " + " | ".join(v for v in VIEWS if v != "auto")),
     "store": (True, "omp | claude | cursor | hermes | hermes.<bank> | agy | all; comma-separated; default: every store not excluded in config"),
     "project": (True, "path prefix or folder name"),
+    "exclude-project": (True, "exclude a folder name or absolute path and its descendants; repeatable"),
     "speaker": (True, "user | assistant | tool | summary | system | thinking | mail | any; comma-separated"),
     "since": (True, "24h 7d 2w 3m 1y or YYYY-MM-DD"),
     "until": (True, "YYYY-MM-DD"),
@@ -103,6 +104,7 @@ class Args:
     def __init__(self, argv: list[str]) -> None:
         self.words: list[str] = []
         self.opts: dict[str, object] = {name: (None if takes else False) for name, (takes, _) in OPTIONS.items()}
+        self.opts["exclude-project"] = []
         it = iter(argv)
         for arg in it:
             if not arg.startswith("-") or arg == "-":
@@ -126,6 +128,11 @@ class Args:
             value = inline if eq else next(it, None)
             if value is None:
                 raise SystemExit(f"--{name} needs a value")
+            if name == "exclude-project":
+                if not value.strip():
+                    raise SystemExit("--exclude-project needs a nonempty value")
+                self.opts[name].append(value)
+                continue
             if name in INT_OPTIONS:
                 try:
                     value = int(value)
@@ -176,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run(cfg, view=view, q=q, ref_text=ref_text, store=args.store, project=args.project, speaker=args.speaker, since=args.since,
                      until=args.until, limit=args.limit, start=args.start, full=args.full, fold=not args.no_fold, budget=budget, out_path=args.out,
-                     rebuild=args.rebuild, reindex=not args.no_index)
+                     rebuild=args.rebuild, reindex=not args.no_index, exclude_projects=tuple(args.exclude_project))
     except RefError as exc:
         return _fail(str(exc), args.json)
     except SystemExit as exc:
@@ -198,7 +205,7 @@ def _fail(message: str, as_json: bool) -> int:
 
 def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, project: str | None, speaker: str | None, since: str | None,
         until: str | None, limit: int | None, start: int | None, full: bool, fold: bool, budget: int, out_path: str | None,
-        rebuild: bool, reindex: bool) -> View:
+        rebuild: bool, reindex: bool, exclude_projects: tuple[str, ...] = ()) -> View:
     from .adapters import discover_stores
 
     index = Index(cfg)
@@ -206,13 +213,15 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
         all_stores = discover_stores(cfg)
         searched = _select_stores(cfg, all_stores, store)
         note = ""
+        exclusion_note = f"  ·  excluded projects: {', '.join(exclude_projects)}" if exclude_projects else ""
         if view == "index":
             target_stores = searched if store else all_stores
             report = index.run(target_stores, rebuild=rebuild, keep_unlisted=bool(store))
             lines = [f"index {'rebuilt' if rebuild else 'updated'} in {report.seconds:.1f}s: {report.sessions_seen} sessions seen, {report.threads_updated} threads read, +{report.turns_added} turns, {report.sessions_removed} removed"]
             lines.extend(f"  ! {e}" for e in report.errors[:10])
             renderer = Renderer(index, cfg)
-            return View("index", "\n".join(lines) + "\n" + renderer.overview(budget, searched=tuple(s.name for s in searched)).text)
+            return View("index", "\n".join(lines) + "\n" + renderer.overview(
+                budget, searched=tuple(s.name for s in searched), exclude_projects=exclude_projects, scope_note=exclusion_note).text)
         if reindex:
             report = index.run(all_stores, time_cap=INDEX_TIME_CAP)
             if report.note():
@@ -229,6 +238,7 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
             scope_note = f"  ·  stores: {','.join(store_names)}" + (f" (not searched: {','.join(excluded)}; add store=all)" if excluded and not store else "")
         if project:
             scope_note += f"  ·  project: {project}"
+        scope_note += exclusion_note
         if since or until:
             scope_note += f"  ·  time: {since or ''}..{until or ''}"
         if q and looks_like_ref(q) and ref_text is None and view == "auto":
@@ -243,7 +253,7 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
                     q, ref_text = ref_text, None
                 else:
                     raise
-        elif q and " " not in q and view == "auto" and not project and not since:
+        elif q and " " not in q and view == "auto" and not project and not since and not exclude_projects:
             # A lone word that names a session prefix: show the session, not a search for its id.
             try:
                 probe = index.resolve(parse_ref(q))
@@ -261,15 +271,16 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
             else:
                 view = "card"
         if view == "overview":
-            return renderer.overview(budget, searched=store_names)
+            return renderer.overview(budget, searched=store_names, exclude_projects=exclude_projects, scope_note=exclusion_note)
         if view == "projects":
-            return renderer.projects(index.projects(store_names, since_ts), budget)
+            return renderer.projects(index.projects(store_names, since_ts, exclude_projects=exclude_projects), budget, scope_note=exclusion_note)
         if view in ("sessions", "live"):
-            rows = index.sessions(stores=store_names, project=project, since=since_ts, until=until_ts, limit=limit or 20, live_only=view == "live")
+            rows = index.sessions(stores=store_names, project=project, since=since_ts, until=until_ts, limit=limit or 20,
+                                  live_only=view == "live", exclude_projects=exclude_projects)
             title = ("active sessions (last 15 minutes)" if view == "live" else "sessions") + (scope_note or "") + f"  ·  {len(rows)} shown"
             return renderer.sessions(rows, budget, title=title, live=view == "live")
         if view == "skills":
-            entries = index.skills(stores=store_names, project=project, since=since_ts, until=until_ts)
+            entries = index.skills(stores=store_names, project=project, since=since_ts, until=until_ts, exclude_projects=exclude_projects)
             return renderer.skills(entries[:limit] if limit else entries, budget, total=len(entries), total_uses=sum(e["uses"] for e in entries),
                                    since_ts=since_ts, until_ts=until_ts, stores=store_names, scope_note=scope_note + note)
         if view == "find":
@@ -278,7 +289,7 @@ def run(cfg, *, view: str, q: str, ref_text: str | None, store: str | None, proj
             speakers = parse_speakers(speaker, DEFAULT_SPEAKERS)
             scope = Scope(stores=store_names, project=project, since=since_ts, until=until_ts,
                           session_pk=resolved.session_pk if resolved else None,
-                          thread_pk=resolved.thread_pk if resolved and resolved.thread_path else None)
+                          thread_pk=resolved.thread_pk if resolved and resolved.thread_path else None, exclude_projects=exclude_projects)
             if resolved:
                 scope_note += f"  ·  within {resolved.ref.thread()}"
             result = find(index, q, speakers=speakers, scope=scope, limit=limit or 8)

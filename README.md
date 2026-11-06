@@ -38,17 +38,23 @@ scry walk omp:01a07243 --speaker user  one line per turn; with speaker=user, the
 scry tree omp:01a07243                 the agent tree with spawn and result turns
 scry links omp:01a07243                parent, children, artifacts, same-project sessions in other stores, sessions that mention this one
 scry sessions --project myproject --since 7d
+scry sessions --exclude-project work --exclude-project=personal
+scry retry --project /home/me --exclude-project /home/me/work/archive
 scry projects
 scry live                              sessions active in the last 15 minutes and what they are doing
 scry skills --since 7d                 skill usage: invocations and skill reads per skill, by thread kind, with a ref to the latest use
 scry export omp:01a07243               whole thread to a file; never inline
 ```
 
-Options: `--store omp,hermes.work` (default: every store not excluded in config), `--project`, `--speaker user,assistant,tool,summary,system,thinking,mail,any`, `--since 24h|7d|2w|3m|1y|YYYY-MM-DD`, `--until`, `--limit`, `--from`, `--full`, `--budget N` (default 4000, max 60000), `--json` (envelope `{schema, view, text, refs, meta}`), `--no-index`, `--rebuild`.
+Options: `--store omp,hermes.work` (default: every store not excluded in config), `--project`, repeatable `--exclude-project VALUE` (also `--exclude-project=VALUE`), `--speaker user,assistant,tool,summary,system,thinking,mail,any`, `--since 24h|7d|2w|3m|1y|YYYY-MM-DD`, `--until`, `--limit`, `--from`, `--full`, `--budget N` (default 4000, max 60000), `--json` (envelope `{schema, view, text, refs, meta}`), `--no-index`, `--rebuild`.
 
 Search: all words must appear in one turn. If nothing matches, the tool retries for all words within one session, then any word, and the header names the tier it used. Quoted phrases, `-word` exclusion and `word*` prefixes work. `find` searches user, assistant, summary and mail text by default, and answers to question tools (Claude Code `AskUserQuestion`, OMP `ask`) count as user text; `--speaker tool` searches tool output and tool-call arguments (file paths, commands, function names), `--speaker thinking` searches reasoning.
 
 Skills: `uses` = `invoked` + `read`. An invocation is an OMP skill sub-turn (`[skill <name>]`) or a Claude Code `Skill` call. A read is a file read of `skill://<name>` (or a file under it) or of `.../<name>/SKILL.md` (OMP `read`, Hermes/Antigravity `read_file`, Claude Code `Read`), or a Hermes `skill_view` call. Each use is timed by its turn, so `--since` and `--until` bound the uses. `--json` puts one entry per skill in `meta.skills` (`name uses invoked read sessions threads first_ts last_ts last_ref`, `threads` split into main, subagent, advisor and sidechain), sorted by uses then name.
+
+Project exclusions apply to discovery: `find` (including fallback searches and per-term counts), `sessions`, `live`, `projects`, `overview` (counts and latest refs), and `skills`. Repeat `--exclude-project` to exclude several projects, optionally alongside the existing `--project` inclusion filter. Matching uses the recorded project path, is literal and case-sensitive, and normalizes backslashes to forward slashes. A folder name matches whole path components and their descendants: `work` excludes `/home/me/work` and `/home/me/work/app`, not `/home/me/workshop` or `/home/me/Work`. An absolute POSIX or drive path, such as `/home/me/work` or `C:/Users/me/work`, matches only that path and its subtree. `%` and `_` are ordinary characters, not wildcards. Sessions with unknown project paths remain visible.
+
+This is a per-call discovery filter, not a security boundary or an indexing exclusion. Transcripts remain indexed, and explicit refs still work in `card`, `read`, `walk`, `tree`, `links` and `export`, just as with `--project`. A plain search word cannot bypass exclusions through the implicit session-prefix shortcut. No project exclusions are configured by default.
 
 The index catches up before every answer (about 50 ms when nothing changed), so live sessions are searchable. Pass `--no-index` to skip that, `--view index` to see the report, `--rebuild` to purge and rebuild.
 

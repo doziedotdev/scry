@@ -100,25 +100,26 @@ class Renderer:
 
     # ------------------------------------------------------------ overview
 
-    def overview(self, budget: int, *, searched: tuple[str, ...] | None = None) -> View:
+    def overview(self, budget: int, *, searched: tuple[str, ...] | None = None,
+                 exclude_projects: tuple[str, ...] = (), scope_note: str = "") -> View:
         out = Out(budget)
-        stores = self.index.stores()
+        stores = self.index.stores(exclude_projects=exclude_projects)
         total_sessions = sum(int(s["sessions"]) for s in stores)
         total_turns = sum(int(s["turns"]) for s in stores)
         first = min((s["first_ts"] for s in stores if s["first_ts"]), default=None)
         last = max((s["last_ts"] for s in stores if s["last_ts"]), default=None)
-        out.add(f"transcripts: {len(stores)} stores · {human_count(total_sessions)} sessions · {human_count(total_turns)} turns · {fmt_ts(first, now=self.now)} → {fmt_ts(last, now=self.now)} (times UTC)")
+        out.add(f"transcripts: {len(stores)} stores · {human_count(total_sessions)} sessions · {human_count(total_turns)} turns · {fmt_ts(first, now=self.now)} → {fmt_ts(last, now=self.now)} (times UTC){scope_note}")
         for s in stores:
             flag = "" if searched is None or s["name"] in searched else "  (excluded by default; add store=" + s["name"] + ")"
             out.add(f"  {s['name']:<16} {int(s['sessions']):>5} sessions {int(s['turns']):>8} turns  last {ago(s['last_ts'], now=self.now):<8} {short_path(s['location'], self.home)}{flag}")
-        projects = self.index.projects()
+        projects = self.index.projects(exclude_projects=exclude_projects)
         if projects:
             out.add("projects (most recent first):")
             for p in projects[:10]:
                 out.add(f"  {short_path(p['project'], self.home):<40} {int(p['sessions']):>4} sessions  {int(p['turns'] or 0):>7} turns  last {ago(p['last_ts'], now=self.now)}  [{p['stores']}]")
             if len(projects) > 10:
                 out.add(f"  … {len(projects) - 10} more: view=projects")
-        recent = self.index.sessions(stores=None, project=None, since=None, until=None, limit=5)
+        recent = self.index.sessions(stores=None, project=None, since=None, until=None, limit=5, exclude_projects=exclude_projects)
         refs: list[str] = []
         if recent:
             out.add("latest sessions:")
@@ -140,7 +141,7 @@ class Renderer:
         out.add(f"find {terms}  ·  {result.total_hits} hits in {n_sessions} sessions  ·  match: {tier}  ·  speakers: {','.join(speakers)}{scope_note}")
         if result.per_term:
             counts = " · ".join(f"{k} {v}" for k, v in result.per_term.items())
-            out.add(f"per term (all stores, these speakers): {counts}")
+            out.add(f"per term (current scope, these speakers): {counts}")
         if not result.groups:
             out.add("nothing matched. Try fewer or different words, speaker=any to include tool output and reasoning, or drop since/store/project.")
             return View("find", out.text(), refs, {"tier": result.tier, "hits": 0})
@@ -586,9 +587,9 @@ class Renderer:
         out.add("next: ref=<session> (card) · ref=<session> view=walk speaker=user", force=True)
         return View("live" if live else "sessions", out.text(), refs)
 
-    def projects(self, rows, budget: int) -> View:
+    def projects(self, rows, budget: int, *, scope_note: str = "") -> View:
         out = Out(budget)
-        out.add(f"projects: {len(rows)}  (sessions · turns · last activity · stores)")
+        out.add(f"projects: {len(rows)}  (sessions · turns · last activity · stores){scope_note}")
         shown = 0
         for p in rows:
             if not out.add(f"  {short_path(p['project'], self.home):<44} {int(p['sessions']):>4} · {int(p['turns'] or 0):>7} · {ago(p['last_ts'], now=self.now):<7} · {p['stores']}"):

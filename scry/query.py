@@ -19,7 +19,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from .index import Index
+from .index import Index, project_clauses
 from .model import Ref
 
 DEFAULT_SPEAKERS = ("user", "assistant", "summary", "mail")
@@ -120,6 +120,29 @@ class Scope:
     until: float | None = None
     session_pk: int | None = None  # find inside one session
     thread_pk: int | None = None  # find inside one agent
+    exclude_projects: tuple[str, ...] = ()
+
+
+def _scope_sql(scope: Scope) -> tuple[str, list]:
+    clauses: list[str] = []
+    params: list = []
+    if scope.stores:
+        clauses.append("se.store IN (%s)" % ",".join("?" * len(scope.stores)))
+        params.extend(scope.stores)
+    project_clauses(scope.project, clauses, params, prefix="se.", exclude_projects=scope.exclude_projects)
+    if scope.since is not None:
+        clauses.append("COALESCE(t.ts, se.activity) >= ?")
+        params.append(scope.since)
+    if scope.until is not None:
+        clauses.append("COALESCE(t.ts, se.started) <= ?")
+        params.append(scope.until)
+    if scope.session_pk is not None:
+        clauses.append("se.id = ?")
+        params.append(scope.session_pk)
+    if scope.thread_pk is not None:
+        clauses.append("th.id = ?")
+        params.append(scope.thread_pk)
+    return "".join(f" AND {clause}" for clause in clauses), params
 
 
 def find(index: Index, q: str | list[str], *, speakers: tuple[str, ...] = DEFAULT_SPEAKERS, scope: Scope = Scope(), limit: int = 8, hits_per_session: int = 3) -> FindResult:
@@ -143,7 +166,7 @@ def find(index: Index, q: str | list[str], *, speakers: tuple[str, ...] = DEFAUL
         g.hits = _pick(g.hits, hits_per_session)
     per_term = {}
     if not hits or tier != "turn":
-        per_term = {t.text: _count(index, t, speakers) for t in positive}
+        per_term = {t.text: _count(index, t, speakers, scope) for t in positive}
     return FindResult(terms, tier, groups[:limit], len(hits), per_term)
 
 
@@ -158,6 +181,7 @@ def _search(index: Index, terms: list[Term], speakers: tuple[str, ...], scope: S
     groups = _column_groups(speakers)
     seen: dict[int, Hit] = {}
     now = time.time()
+    scope_sql, scope_params = _scope_sql(scope)
     for columns, speaker_filter in groups:
         expr = f"{{{' '.join(columns)}}}: {joined}" if columns else joined
         sql = (
@@ -170,24 +194,8 @@ def _search(index: Index, terms: list[Term], speakers: tuple[str, ...], scope: S
         if speaker_filter:
             sql += " AND t.speaker IN (%s)" % ",".join("?" * len(speaker_filter))
             params.extend(speaker_filter)
-        if scope.stores:
-            sql += " AND se.store IN (%s)" % ",".join("?" * len(scope.stores))
-            params.extend(scope.stores)
-        if scope.project:
-            sql += " AND (se.project LIKE ? OR se.project_slug LIKE ? OR se.project LIKE ?)"
-            params.extend([scope.project + "%", "%" + scope.project + "%", "%/" + scope.project.strip("/") + "%"])
-        if scope.since is not None:
-            sql += " AND COALESCE(t.ts, se.activity) >= ?"
-            params.append(scope.since)
-        if scope.until is not None:
-            sql += " AND COALESCE(t.ts, se.started) <= ?"
-            params.append(scope.until)
-        if scope.session_pk is not None:
-            sql += " AND se.id = ?"
-            params.append(scope.session_pk)
-        if scope.thread_pk is not None:
-            sql += " AND th.id = ?"
-            params.append(scope.thread_pk)
+        sql += scope_sql
+        params.extend(scope_params)
         sql += " ORDER BY rank LIMIT ?"
         params.append(CANDIDATES)
         for row in index.db.execute(sql, params):
@@ -261,15 +269,22 @@ def _pick(hits: list[Hit], n: int) -> list[Hit]:
     return sorted(chosen, key=lambda h: (h.thread_path, h.ordinal, h.sub))
 
 
-def _count(index: Index, term: Term, speakers: tuple[str, ...]) -> int:
+def _count(index: Index, term: Term, speakers: tuple[str, ...], scope: Scope) -> int:
     total = 0
+    scope_sql, scope_params = _scope_sql(scope)
     for columns, speaker_filter in _column_groups(speakers):
         expr = f"{{{' '.join(columns)}}}: {term.fts()}" if columns else term.fts()
-        sql = "SELECT COUNT(*) FROM turn_fts JOIN turn t ON t.id = turn_fts.rowid WHERE turn_fts MATCH ?"
+        sql = (
+            "SELECT COUNT(*) FROM turn_fts JOIN turn t ON t.id = turn_fts.rowid "
+            "JOIN thread th ON th.id=t.thread_pk JOIN session se ON se.id=th.session_pk "
+            "WHERE turn_fts MATCH ?"
+        )
         params: list = [expr]
         if speaker_filter:
             sql += " AND t.speaker IN (%s)" % ",".join("?" * len(speaker_filter))
             params.extend(speaker_filter)
+        sql += scope_sql
+        params.extend(scope_params)
         try:
             total += int(index.db.execute(sql, params).fetchone()[0])
         except Exception:

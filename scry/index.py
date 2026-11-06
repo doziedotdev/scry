@@ -749,22 +749,28 @@ class Index:
     def turn(self, thread_pk: int, ordinal: int, sub: int = 0) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM turn WHERE thread_pk=? AND ordinal=? AND sub=?", (thread_pk, ordinal, sub)).fetchone()
 
-    def stores(self) -> list[sqlite3.Row]:
+    def stores(self, *, exclude_projects: tuple[str, ...] = ()) -> list[sqlite3.Row]:
+        clauses: list[str] = []
+        params: list = []
+        project_clauses(None, clauses, params, prefix="se.", exclude_projects=exclude_projects)
+        join_scope = "".join(f" AND {clause}" for clause in clauses)
         return self.db.execute(
             "SELECT s.name, s.harness, s.location, s.indexed_at, COUNT(se.id) AS sessions, COALESCE(SUM(se.turn_count),0) AS turns, "
-            "MIN(se.started) AS first_ts, MAX(se.activity) AS last_ts FROM store s LEFT JOIN session se ON se.store=s.name GROUP BY s.name ORDER BY s.name"
+            "MIN(se.started) AS first_ts, MAX(se.activity) AS last_ts FROM store s LEFT JOIN session se ON se.store=s.name"
+            + join_scope + " GROUP BY s.name ORDER BY s.name", params,
         ).fetchall()
 
-    def projects(self, stores: tuple[str, ...] | None = None, since: float | None = None) -> list[sqlite3.Row]:
+    def projects(self, stores: tuple[str, ...] | None = None, since: float | None = None, *, exclude_projects: tuple[str, ...] = ()) -> list[sqlite3.Row]:
         sql = "SELECT COALESCE(project, project_slug, '(unknown)') AS project, COUNT(*) AS sessions, SUM(turn_count) AS turns, MIN(started) AS first_ts, MAX(activity) AS last_ts, GROUP_CONCAT(DISTINCT store) AS stores FROM session"
         clauses, params = _scope(stores, since, None)
+        project_clauses(None, clauses, params, exclude_projects=exclude_projects)
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         return self.db.execute(sql + " GROUP BY 1 ORDER BY last_ts DESC", params).fetchall()
 
-    def sessions(self, *, stores: tuple[str, ...] | None, project: str | None, since: float | None, until: float | None, limit: int, live_only: bool = False) -> list[sqlite3.Row]:
+    def sessions(self, *, stores: tuple[str, ...] | None, project: str | None, since: float | None, until: float | None, limit: int, live_only: bool = False, exclude_projects: tuple[str, ...] = ()) -> list[sqlite3.Row]:
         clauses, params = _scope(stores, since, until)
-        _project_clause(project, clauses, params)
+        project_clauses(project, clauses, params, exclude_projects=exclude_projects)
         if live_only:
             clauses.append("activity >= ?")
             params.append(time.time() - LIVE_WINDOW)
@@ -773,7 +779,7 @@ class Index:
             sql += " WHERE " + " AND ".join(clauses)
         return self.db.execute(sql + " ORDER BY activity DESC LIMIT ?", (*params, limit)).fetchall()
 
-    def skills(self, *, stores: tuple[str, ...] | None, project: str | None, since: float | None, until: float | None) -> list[dict]:
+    def skills(self, *, stores: tuple[str, ...] | None, project: str | None, since: float | None, until: float | None, exclude_projects: tuple[str, ...] = ()) -> list[dict]:
         """How often each skill was used: one entry per skill, most used first.
 
         Each entry: ``name uses invoked read sessions threads first_ts last_ts`` plus
@@ -782,7 +788,7 @@ class Index:
         ``until`` bound the uses themselves, not only the sessions holding them.
         """
         clauses, params = _scope(stores, since, until, prefix="se.")
-        _project_clause(project, clauses, params, prefix="se.")
+        project_clauses(project, clauses, params, prefix="se.", exclude_projects=exclude_projects)
         when = "COALESCE(t.ts, se.activity, se.started)"
         if since is not None:
             clauses.append(f"{when} >= ?")
@@ -866,11 +872,27 @@ def _scope(stores: tuple[str, ...] | None, since: float | None, until: float | N
     return clauses, params
 
 
-def _project_clause(project: str | None, clauses: list[str], params: list, *, prefix: str = "") -> None:
-    """A project filter: a path prefix, a slug fragment, or a folder name."""
+def project_clauses(project: str | None, clauses: list[str], params: list, *, prefix: str = "", exclude_projects: tuple[str, ...] = ()) -> None:
+    """Keep inclusive matching; exclude literal project paths at folder boundaries."""
     if project:
         clauses.append(f"({prefix}project LIKE ? OR {prefix}project_slug LIKE ? OR {prefix}project LIKE ?)")
         params.extend([project + "%", "%" + project + "%", "%/" + project.strip("/") + "%"])
+    if not exclude_projects:
+        return
+    column = f"replace(COALESCE({prefix}project, ''), char(92), '/')"
+    for excluded in exclude_projects:
+        path = os.path.expanduser(excluded.replace("\\", "/"))
+        absolute = path.startswith("/") or re.match(r"^[A-Za-z]:/", path)
+        path = os.path.normpath(path)
+        if path == "/":
+            clauses.append(f"substr({column}, 1, 1) <> '/'")
+        elif absolute:
+            subtree = path.rstrip("/") + "/"
+            clauses.append(f"NOT ({column} = ? OR substr({column}, 1, ?) = ?)")
+            params.extend([path.rstrip("/"), len(subtree), subtree])
+        else:
+            clauses.append(f"instr('/' || trim({column}, '/') || '/', ?) = 0")
+            params.append("/" + path.strip("/") + "/")
 
 
 def skill_of_call(tool: str, args: str) -> tuple[str, str] | None:
