@@ -112,6 +112,25 @@ def test_new_session_is_seen(workspace):
     assert idx.resolve(parse_ref("omp:fixture003")).turn_count == 1
 
 
+def test_new_session_in_a_project_folder_that_was_empty_is_seen(workspace):
+    """OMP creates a project folder before the session file lands; a pass in between must
+    not leave that folder unwatched, or the session is never discovered incrementally."""
+    idx, omp = workspace
+    project = omp / "-poker"
+    project.mkdir()
+    _bump(omp)
+    idx.run()  # the root changed, the folder holds nothing yet
+    new = project / "2026-09-04T10-00-00-000Z_fixture004.jsonl"
+    lines = [
+        {"type": "session", "version": 3, "id": "fixture004", "timestamp": "2026-09-04T10:00:00.000Z", "cwd": "/home/me/poker"},
+        {"type": "message", "id": "p1", "parentId": None, "timestamp": "2026-09-04T10:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "First poker session."}]}},
+    ]
+    new.write_text("".join(json.dumps(l) + "\n" for l in lines))
+    _bump(project)
+    idx.run()
+    assert idx.resolve(parse_ref("omp:fixture004")).turn_count == 1
+
+
 def test_truncated_session_resets(workspace):
     idx, omp = workspace
     main = next(omp.glob("*/*fixture001.jsonl"))

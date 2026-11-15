@@ -354,12 +354,7 @@ class Index:
                 return None  # a known file vanished: let full discovery prune it
             if stamps.get(path) != stamp:
                 changed.add(path)
-        dirs = {store.location}
-        for path in known:
-            parent = os.path.dirname(path)
-            while parent.startswith(store.location) and parent not in dirs:
-                dirs.add(parent)
-                parent = os.path.dirname(parent)
+        dirs = watched_dirs(store.location, known)
         roots = set()
         for path in changed:
             root = self._root_of(store.name, path)
@@ -413,18 +408,13 @@ class Index:
         spec = self._store_spec(name)
         stamps: dict[str, str] = {}
         if os.path.isdir(spec.location):
-            dirs = {spec.location}
             for path in known:
                 try:
                     st = os.stat(path)
                     stamps[path] = f"{st.st_size}:{st.st_mtime_ns}"
                 except OSError:
                     continue
-                parent = os.path.dirname(path)
-                while parent.startswith(spec.location) and parent not in dirs:
-                    dirs.add(parent)
-                    parent = os.path.dirname(parent)
-            for path in dirs:
+            for path in watched_dirs(spec.location, known):
                 try:
                     stamps["dir:" + path] = str(os.stat(path).st_mtime_ns)
                 except OSError:
@@ -1056,27 +1046,42 @@ def _prepare_in_worker(job: tuple) -> tuple[str, "PreparedSession | None", str]:
         return source.session_id, None, f"{type(exc).__name__}: {exc}"
 
 
+def watched_dirs(location: str, known_files: list[str]) -> set[str]:
+    """Directories whose mtime can reveal a change: the store root, its immediate
+    subdirectories, and every directory on the way down to a known file.
+
+    The immediate subdirectories matter because a project folder can exist before its
+    first session file lands (or outlive its last one): with no known file inside, nothing
+    else would stat it, and a session written there later would never be discovered.
+    """
+    dirs: set[str] = {location}
+    try:
+        with os.scandir(location) as entries:
+            dirs.update(entry.path for entry in entries if entry.is_dir(follow_symlinks=False))
+    except OSError:
+        pass
+    for path in known_files:
+        parent = os.path.dirname(path)
+        while parent.startswith(location) and parent not in dirs:
+            dirs.add(parent)
+            parent = os.path.dirname(parent)
+    return dirs
+
+
 def store_signature(store: StoreSpec, known_files: list[str]) -> str:
     """A cheap fingerprint of everything that could have changed in a store.
 
     A directory's mtime changes when a file or directory is added, removed or renamed
-    directly inside it, so stat-ing the store root, every directory on the way down to a
-    known file, and every known file catches new sessions, new agents, growth and
-    truncation. A brand-new subtree bumps the mtime of the directory it appears in,
-    which is on that path. Database stores are one file plus their WAL. Empty string
-    means "cannot tell".
+    directly inside it, so stat-ing the directories ``watched_dirs`` names and every
+    known file catches new sessions, new agents, growth and truncation. A brand-new
+    subtree bumps the mtime of the directory it appears in, which is watched. Database
+    stores are one file plus their WAL. Empty string means "cannot tell".
     """
     location = store.location
     parts: list[str] = []
     try:
         if os.path.isdir(location):
-            dirs: set[str] = {location}
-            for path in known_files:
-                parent = os.path.dirname(path)
-                while parent.startswith(location) and parent not in dirs:
-                    dirs.add(parent)
-                    parent = os.path.dirname(parent)
-            for path in sorted(dirs):
+            for path in sorted(watched_dirs(location, known_files)):
                 try:
                     parts.append(str(os.stat(path).st_mtime_ns))
                 except OSError:
